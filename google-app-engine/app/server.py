@@ -4,6 +4,8 @@ from starlette.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 import uvicorn, aiohttp, asyncio
 from io import BytesIO
+from glob import glob
+import random
 
 from fastai import *
 from fastai.vision import *
@@ -16,6 +18,26 @@ path = Path(__file__).parent
 app = Starlette()
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_headers=['X-Requested-With', 'Content-Type'])
 app.mount('/static', StaticFiles(directory='app/static'))
+
+def download_image(img_url, output_name):
+    response = requests.get(img_url, stream=True)
+    if not response.ok:
+        raise Exception("Could not download file: {}".format(response.reason))
+
+    chunksize = 120 
+
+    with open(output_name, "wb") as out_file:
+        for chunk in response.iter_content(chunk_size=chunksize):
+            out_file.write(chunk)
+
+def get_image_name(img_url):
+    fields = img_url.split("/")
+    if not fields:
+        raise Exception("Wrong or unknown url format")
+    if not fields[-1] or fields[-1].count(".") == 0:
+        raise Exception("Unknown image iname")
+                                                                                                                  
+    return fields[-1]
 
 async def download_file(url, dest):
     if dest.exists(): return
@@ -44,6 +66,35 @@ def index(request):
     html = path/'view'/'index.html'
     return HTMLResponse(html.open().read())
 
+@app.route('/img_download')
+async def img_download(request):
+    # Create folder where images will be stored
+    store_dir = 'img_store'
+    Path(store_dir).mkdir(exist_ok=True)
+
+    urls = [
+        'https://s3.amazonaws.com/cetalingua/wp-content/uploads/2019/11/08141219/2010_10_18_15_13_01__t-90-0-resized.png',
+    ]
+    
+    # Choise random url from the list
+    url = random.choice(urls)
+
+    output_image = get_image_name(url)
+    dest_path = str(Path(store_dir).joinpath(output_image).absolute())
+    download_image(url, dest_path)
+
+    img_data = None
+    with open(dest_path, 'rb') as f:
+        img_data = f.read()
+
+    # just for checking if images were downloaded to store_dir
+    entries = Path(store_dir).absolute()
+    for e in entries.iterdir():
+        print(f"found entry: {e}")
+
+    img = open_image(BytesIO(img_data))
+    return JSONResponse({'result': str(learn.predict(img)[0])})
+
 @app.route('/analyze', methods=['POST'])
 async def analyze(request):
     data = await request.form()
@@ -52,5 +103,5 @@ async def analyze(request):
     return JSONResponse({'result': str(learn.predict(img)[0])})
 
 if __name__ == '__main__':
-    if 'serve' in sys.argv: uvicorn.run(app, host='0.0.0.0', port=8080)
-
+    if 'serve' in sys.argv: 
+        uvicorn.run(app, host='0.0.0.0', port=8080)
